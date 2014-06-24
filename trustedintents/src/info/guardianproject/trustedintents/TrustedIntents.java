@@ -17,6 +17,7 @@ import android.util.Log;
 
 import java.lang.reflect.Constructor;
 import java.security.cert.CertificateException;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 
 public class TrustedIntents {
@@ -26,10 +27,12 @@ public class TrustedIntents {
     private static PackageManager pm;
 
     private final LinkedHashSet<ApkSignaturePin> pinList;
+    private final LinkedHashMap<ApkSignaturePin> trustedAppMap;
 
     private TrustedIntents(Context context) {
         pm = context.getPackageManager();
         this.pinList = new LinkedHashSet<ApkSignaturePin>();
+        trustedAppMap = new LinkedHashMap<String, ApkSignaturePin>();
     }
 
     public static TrustedIntents get(Context context) {
@@ -236,6 +239,45 @@ public class TrustedIntents {
                 return; // found a matching trusted APK signer
 
         throw new CertificateException("APK signatures did not match!");
+    }
+
+    /**
+     * Add an app to trust, based on packageName and APK signature.
+     *
+     * @param pin the APK signature to trust
+     * @param packageName the app to assign the signature to
+     */
+    public void addTrustedApp(String packageName, ApkSignaturePin pin) {
+        trustedAppMap.put(packageName, pin);
+    }
+
+    public void checkTrustedApp(String packageName, PackageInfo packageInfo)
+            throws NameNotFoundException, CertificateException {
+        checkTrustedApp(packageName, packageInfo.signatures);
+    }
+
+    public void checkTrustedApp(String packageName, Signature[] signatures)
+            throws NameNotFoundException, CertificateException {
+        if (TextUtils.isEmpty(packageName))
+            throw new NameNotFoundException("packageName cannot be null or empty!");
+        if (signatures == null || signatures.length == 0)
+            throw new CertificateException("signatures cannot be null or empty!");
+        for (int i = 0; i < signatures.length; i++)
+            if (signatures[i] == null || signatures[i].toByteArray().length == 0)
+                throw new CertificateException("Certificates cannot be null or empty!");
+
+        // check whether the APK signer is trusted for all apps
+        for (ApkSignaturePin pin : pinList)
+            if (areSignaturesEqual(signatures, pin.getSignatures()))
+                return; // found a matching trusted APK signer
+
+        if (!trustedAppMap.containsKey(packageName))
+            throw new NameNotFoundException(packageName);
+        if (areSignaturesEqual(signatures, trustedAppMap.get(packageName).getSignatures())) {
+            return; // found a matching TOFU/POP mapping
+        } else {
+            throw new CertificateException("Signature not equal to pin for " + packageName);
+        }
     }
 
     public boolean areSignaturesEqual(Signature[] sigs0, Signature[] sigs1) {
